@@ -39,7 +39,7 @@ const SUB_AGENTS = [
   { id: "codex", dir: `${HOME}/.codex/agents`, model: true },
   { id: "cursor", dir: `${HOME}/.cursor/agents` },
   { id: "droid", dir: `${HOME}/.factory/droids`, mcp: true },
-  { id: "opencode", dir: `${HOME}/.config/opencode/agents` },
+  { id: "opencode", dir: `${HOME}/.config/opencode/agents`, primary: true },
   { id: WSL, wsl: true, no: "magpie gives no subagents to an agent in WSL yet" },
 ];
 const MODELS = [{ id: "openai/gpt-6-sol", name: "GPT-6 Sol", note: "OpenAI" }, { id: "group/review", name: "review", group: true }];
@@ -172,15 +172,16 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
 
         // the tab, with its count, between Hooks and RTK
         const tabs = (await v.locator(".lib-tabs button").allTextContents()).map((x) => x.trim());
-        assert.deepEqual(tabs.slice(3, 6), [w("Hooks"), w("Subagents") + " · 1", "RTK"]);
+        assert.deepEqual(tabs.slice(3, 6), [w("Hooks"), w("Custom agents") + " · 1", "RTK"]);
+        assert.equal((await row("reviewer").locator(".lib-subagentrole").textContent()).trim(), w("Subagent"));
         // the row: what it is for, and what it binds
         assert.equal((await row("reviewer").locator(".lib-subagentdesc").textContent()).trim(), LONG);
         assert.equal((await row("reviewer").locator(".lib-subagentuses").textContent()).trim(), w("Skills: {names}", { names: "tdd" }) + " · " + w("MCP servers: {names}", { names: "github" }));
         await wrapped(page, 420);
         // what the agents it is given to do with what it binds: Codex binds
         // neither; Claude Code both, so it isn't named
-        await v.locator(".lib-subagents-noskills").filter({ hasText: w("{agents} can't bind skills to a subagent: theirs gets its prompt, and every skill the agent has.", { agents: "Codex" }) }).waitFor();
-        await v.locator(".lib-subagents-nomcp").filter({ hasText: w("{agents} can't bind MCP servers to a subagent: theirs gets its prompt, and every server the agent has.", { agents: "Codex" }) }).waitFor();
+        await v.locator(".lib-subagents-noskills").filter({ hasText: w("{agents} can't bind skills to this custom agent: it uses the client's skills instead.", { agents: "Codex" }) }).waitFor();
+        await v.locator(".lib-subagents-nomcp").filter({ hasText: w("{agents} can't bind MCP servers to this custom agent: it uses the client's servers instead.", { agents: "Codex" }) }).waitFor();
         await v.locator(".lib-subagents-no").filter({ hasText: w("magpie can't give subagents to {agents} yet: their chips are greyed, and say why.", { agents: "Claude Code (Ubuntu)" }) }).waitFor();
         assert.equal(await v.locator(".lib-subagents-cursor").count(), 0, "the Cursor aside with no subagent given to Cursor");
 
@@ -202,7 +203,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await press(page, v.locator(".lib-tabs button").nth(3));
         await press(page, v.locator(".lib-tabs button").nth(4));
         await v.locator(".lib-subagents-cursor").filter({ hasText: w("The Cursor app has these subagents; its cursor-agent command reads only a project's own .cursor/agents.") }).waitFor();
-        await v.locator(".lib-subagents-noskills").filter({ hasText: w("{agents} can't bind skills to a subagent: theirs gets its prompt, and every skill the agent has.", { agents: "Codex, Cursor" }) }).waitFor();
+        await v.locator(".lib-subagents-noskills").filter({ hasText: w("{agents} can't bind skills to this custom agent: it uses the client's skills instead.", { agents: "Codex, Cursor" }) }).waitFor();
 
         // Add: the editor, every agent that can take it picked
         await press(page, v.locator(".after-list button"));
@@ -210,7 +211,8 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await ed.waitFor();
         await settled(page);
         assert.equal(await page.locator("#modal select").count(), 0, "a native <select>");
-        assert.equal((await ed.locator(".ehead b").textContent()).trim(), w("New subagent"));
+        assert.equal((await ed.locator(".ehead b").textContent()).trim(), w("New custom agent"));
+        assert.equal((await ed.locator(".lib-subagentmode").textContent()).trim(), w("Subagent"));
         const edChip = (id) => ed.locator(`.lib-ag[data-agent="${id}"]`);
         for (const id of ["claude", "codex", "cursor", "droid", "opencode"]) assert.equal(await edChip(id).getAttribute("aria-pressed"), "true", id);
         assert.equal(await edChip(WSL).getAttribute("aria-pressed"), "false");
@@ -240,7 +242,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         // the model from an app menu: the agent's pick at first, then a
         // routing group, which only Codex is given
         assert.equal((await ed.locator(".lib-subagentmodel").textContent()).trim(), w("Picked by the agent"));
-        assert.equal((await hint("model").textContent()).trim(), w("Each agent runs it on the model it picks for a subagent"));
+        assert.equal((await hint("model").textContent()).trim(), w("Each client picks the model for this agent"));
         await ed.locator(".lib-subagentmodel").click();
         const mmenu = page.locator(".proto-menu");
         await mmenu.waitFor();
@@ -266,10 +268,10 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.deepEqual(await sideways(page), [], "sideways scroll in the editor");
         await ed.locator(".bar button.primary").click();
         await ed.waitFor({ state: "detached" });
-        assert.deepEqual(posts.shift(), { what: "subagents/save", body: { old: "", subagent: { name: "test-writer", description: "写测试", prompt: "Write tests first.\nThen run them.", model: "group/review", skills: ["tdd"], mcp: [], agents: ["claude", "codex", "cursor", "droid"] } } });
+        assert.deepEqual(posts.shift(), { what: "subagents/save", body: { old: "", subagent: { name: "test-writer", description: "写测试", prompt: "Write tests first.\nThen run them.", mode: "subagent", model: "group/review", skills: ["tdd"], mcp: [], agents: ["claude", "codex", "cursor", "droid"] } } });
         await row("test-writer").waitFor();
         assert.equal((await row("test-writer").locator(".lib-subagentuses").textContent()).trim(), w("Model: {name}", { name: "review" }) + " · " + w("Skills: {names}", { names: "tdd" }));
-        await v.locator(".lib-subagents-nomodel").filter({ hasText: w("{agents} can't be given a subagent's model: theirs runs on the model the agent picks.", { agents: "Claude Code, Cursor, Droid" }) }).waitFor();
+        await v.locator(".lib-subagents-nomodel").filter({ hasText: w("{agents} can't be given this custom agent's model: the client picks its model.", { agents: "Claude Code, Cursor, Droid" }) }).waitFor();
         // Codex's subagent model set on the Agents page from here on
         state.held = "lead";
 
@@ -300,6 +302,68 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await settled(page);
         assert.equal((await ed.locator(".lib-subagentmodel").textContent()).trim(), "review");
         assert.equal((await hint("model").textContent()).trim(), w("Not set for {agents}: theirs runs on the model the agent picks", { agents: "Claude Code, Cursor, Droid" }) + " · " + w("Codex's subagent model on the Agents page is set, and takes the place of this one"));
+        await ed.locator(".bar button", { hasText: w("Cancel") }).click();
+        await ed.waitFor({ state: "detached" });
+
+        // A primary agent: only clients whose writer supports the role
+        // stay selected, and the saved role is visible when opened again.
+        await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
+        await press(page, v.locator(".after-list button"));
+        await ed.waitFor();
+        await settled(page);
+        await ed.locator("input").first().fill("team-lead");
+        await ed.locator(".lib-subagentdescin").fill("Plans the work");
+        await ed.locator(".lib-subagentprompt").fill("Coordinate the task.");
+        const pickRole = async (name) => {
+          await ed.locator(".lib-subagentmode").click();
+          const menu = page.locator(".proto-menu");
+          await menu.waitFor();
+          assert.equal((await menu.locator(".pm-head").textContent()).trim(), w("Agent role"));
+          await menu.locator(".pm-item").filter({ has: page.locator(".pm-name", { hasText: new RegExp("^" + w(name) + "$") }) }).click();
+          await menu.waitFor({ state: "detached" });
+        };
+        await pickRole("Primary agent");
+        assert.equal((await ed.locator(".lib-subagentmode").textContent()).trim(), w("Primary agent"));
+        assert.equal(await edChip("opencode").getAttribute("aria-pressed"), "true");
+        for (const id of ["claude", "codex", "cursor", "droid"]) {
+          assert.equal(await edChip(id).getAttribute("aria-pressed"), "false");
+          assert.equal(await edChip(id).getAttribute("aria-disabled"), "true");
+        }
+        assert.equal(await edChip("codex").getAttribute("title"), w("magpie can't write primary agents for {agent} yet", { agent: "Codex" }));
+        await edChip("codex").click({ force: true });
+        assert.equal(await edChip("codex").getAttribute("aria-pressed"), "false");
+        assert.deepEqual(posts, [], "changing a role must not save before Add");
+        assert.deepEqual(await sideways(page), [], "primary editor must fit at 420");
+        await ed.locator(".bar button.primary").click();
+        await ed.waitFor({ state: "detached" });
+        assert.deepEqual(posts.shift(), { what: "subagents/save", body: { old: "", subagent: { name: "team-lead", description: "Plans the work", prompt: "Coordinate the task.", mode: "primary", model: "", skills: [], mcp: [], agents: ["opencode"] } } });
+        await row("team-lead").waitFor();
+        assert.equal((await row("team-lead").locator(".lib-subagentrole").textContent()).trim(), w("Primary agent"));
+        assert.equal(await row("team-lead").locator('.lib-ag[data-agent="codex"]').getAttribute("aria-disabled"), "true");
+        await press(page, row("team-lead"));
+        await ed.waitFor();
+        await settled(page);
+        assert.equal((await ed.locator(".lib-subagentmode").textContent()).trim(), w("Primary agent"));
+        await pickRole("Subagent");
+        assert.equal(await edChip("codex").getAttribute("aria-disabled"), null);
+        await edChip("codex").click();
+        await ed.locator(".bar button.primary").click();
+        await ed.waitFor({ state: "detached" });
+        const switched = posts.shift();
+        assert.equal(switched.what, "subagents/save");
+        assert.equal(switched.body.old, "team-lead");
+        assert.equal(switched.body.subagent.mode, "subagent");
+        assert.deepEqual(switched.body.subagent.agents.toSorted(), ["codex", "opencode"]);
+
+        // The renamed empty state still opens an editor whose default
+        // keeps the behavior of existing subagents.
+        state.subagents = [];
+        await page.reload();
+        await v.getByText(w("No agents in the library yet"), { exact: true }).waitFor();
+        await v.getByRole("button", { name: w("＋ Add an agent"), exact: true }).click();
+        await ed.waitFor();
+        await settled(page);
+        assert.equal((await ed.locator(".lib-subagentmode").textContent()).trim(), w("Subagent"));
         await ed.locator(".bar button", { hasText: w("Cancel") }).click();
         await ed.waitFor({ state: "detached" });
 

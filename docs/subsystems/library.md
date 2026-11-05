@@ -1,9 +1,9 @@
-# Library: instructions, MCP servers, skills, hooks, subagents and RTK
+# Library: instructions, MCP servers, skills, hooks, custom agents and RTK
 
 The library keeps what every agent should know in one place: the
 instructions each agent reads before a conversation, the MCP servers it can
 call, the skills it can load, the hooks it runs at points of its turn, and
-the subagents it can hand a task to.
+the custom agents used for conversations or delegated tasks.
 magpie writes these into each agent's own
 files in that agent's format, and takes back only what it wrote. Everything
 else in those files stays as it was. Package `internal/library` also gives
@@ -33,6 +33,38 @@ agents RTK, a CLI that cuts shell output down before the model reads it.
 | Backups | Before a change first writes an agent file, `backups` copies it to `BackupDir`, one folder per change. The last `keepBackups` (30) changes are kept. The Backups button at the top of every tab, beside Library folder, opens that folder (`libHead`; Dade on Discord found it at the foot of a long page). | [`backup.go`](../../internal/library/backup.go) |
 | RTK | `SetRTK` runs rtk's own installer (`rtk init -g …`) for an agent being switched on. For one being switched off, it removes exactly what the installer wrote, using magpie's own code, which works even with rtk gone. `ReadRTK` reads each agent's files to say which have the hook. An agent gone for its CLI (`CLIMissing`, #2254) isn't offered rtk, but one that still has the hook is listed so it can be taken out. `rtkSpec.blocked` stops the installer where it would break an agent. `rtkSpec.env` tells the installer the agent's folder where rtk would pick another: Hermes Agent's is `appdir.HermesHome` (`%LOCALAPPDATA%\hermes` on Windows), which rtk is given as `HERMES_HOME`, since rtk 0.51 knows only `$HERMES_HOME` and `~/.hermes`. Antigravity CLI (`agy`, #2202) gets rtk 0.51's own plugin for Antigravity, `plugins/rtk` in its global customization folder `~/.gemini/config` (`plugin.json`, `hooks.json` with `PreToolUse` → `rtk hook antigravity`, `rules/AGENTS.md`), which `agy plugin list` lists; switching it off takes that one folder out. rtk 0.50 knows Antigravity only per project and fails `rtk init -g --agent antigravity`, so an older rtk is `blocked` (`agyBlocked`) and the row says to update RTK. OpenCode 2 loads only the plugin rtk 0.52 on writes (one default object with `id` and `setup()`, rtk-ai/rtk#4187); an older rtk's plugin is for OpenCode 1 and OpenCode 2 refuses it, so with an OpenCode 2 here an older rtk is `blocked` (`openCodeBlocked`) and the row says to update RTK (#2295). Under OpenCode 2, an old plugin left from before an rtk update counts as off once the rtk here can write the new one (`openCodeHas`), so switching it on writes the new one over it; with an older rtk it counts as on, so it can be switched off. Factory's Droid (lml0664 on Discord) gets rtk's own `rtk init -g --agent droid`, given Droid's folder as `FACTORY_HOME_OVERRIDE`; rtk puts its `Execute` group (`rtk hook droid`) in the root `hooks.json`, or in `settings.json`'s `hooks.PreToolUse` where Droid's hooks already are, so `droidHookFiles` reads and switches off all three places rtk 1.1.0 may use (`hooks.json`, `hooks/hooks.json`, `settings.json`), leaving the user's own hooks. rtk before 0.44 has no Droid agent, so it is `blocked` (`droidBlocked`). A detected agent RTK has no hook for at all is still listed, from `rtkNoHook`, with the reason and a switch that can't be turned on (dsh: its hooks can allow or deny a command but not rewrite it, and `rtk init` has no `--agent dsh`; Grok Build and Grok App: `rtk init` has no Grok or Grok App agent, so both are listed with the switch off; Qoder and Qoder CN: rtk 1.1.0 has no Qoder agent; Cline and Kimi Code: `rtk init --agent cline|kimi` writes only one project's `.clinerules` or `AGENTS.md`, instructions with no hook, and Kimi's refuses `-g`). RTK 1.1.0's Trae, Windsurf, Kilo Code and Mistral Vibe have no magpie agent. The page's No RTK hook tag gives each agent's own reason and rtk-ai/rtk issue (`rtkNoHookWhy` in plugins/library/client.js: dsh #3847, Grok Build and Grok App #2136, Qoder and Qoder CN #1327, Cline #3841), and an agent with no entry gets no link; `TestRTKNoHookIssuesAreEachAgents` fails when the page and `rtkNoHook` cite different issues, or two agents cite the same ones without a reason in `sharedRTKIssues`. | [`rtk.go`](../../internal/library/rtk.go) |
 | RTK in WSL | An agent in a WSL distro (`claude@wsl:Ubuntu`) is listed by its kind (`rtkKind`), and its hook runs in the distro, where Windows' rtk.exe is no command, so it gets the distro's own rtk (lex on Discord). `rtkDistroOf` asks the distro with `wsl.exe -d <distro> -e sh -lc` where rtk is (a login or interactive shell's PATH; else `~/.local/bin` or `~/.cargo/bin`, `offPath`), kept 15s; `ReadRTK` lists one `RTKDistro` for each distro its agents are in. Install RTK in WSL `<distro>` (`InstallRTKIn`, `POST /api/library/rtk/install` with `distro`, `magpie library rtk install <distro>`) runs RTK's own Linux installer in the distro (`curl -fsSL …/install.sh \| sh`, wget where there's no curl). Switching an agent on runs the distro's rtk there (`rtkInstallWSL`: `rtk init -g …` with its folder on PATH, Claude Code pointed at a folder of its own for the OpenCode and Cursor installers), and reads and edits its files under the distro's home as magpie opens it (`rtkClaudeDir`, `rtkCodexDir`, `rtkHome`). A distro that isn't running is never started (#3896): `rtkWSLLive` and `rtkDistroOf` check `agent.WSLRunning` first, its agents are listed `asleep` with the switch off, and switching or installing says to start it (`TestRTKWSLAsleep`). The page gives each distro a card (`rtkDistroCard` in plugins/library/client.js; library-rtk-wsl.test.cjs). | [`rtk_wsl.go`](../../internal/library/rtk_wsl.go) |
+
+## Custom agent roles
+
+The Library's **Custom agents** tab (代理 in Chinese) manages both primary
+agents and subagents (#5401). `Subagent`, `Library.Subagents`, the `subagents`
+JSON keys and API paths keep their storage names so existing libraries,
+backups and sync bundles remain readable. The optional `Subagent.Mode` is
+`primary` or `subagent`; an absent or empty field means `subagent`. Saving
+an unknown mode is refused.
+
+[`subagents.go`](../../internal/library/subagents.go)'s `subagentSpec.primary`
+and `SubagentAgentView.Primary` say whether magpie can write a primary agent
+for a client. Currently only OpenCode's writer does: its Markdown file
+gets `mode: primary` or `mode: subagent`, as documented in
+[OpenCode's agent modes](https://opencode.ai/docs/agents/#mode). A primary
+agent can be selected for a conversation; a subagent can be delegated a task.
+The other writers retain their subagent behavior. This is magpie's current
+writer support, not a claim that those clients cannot offer primary agents.
+
+The editor displays the role and support limits, disables incompatible
+clients, and removes their selections when the role changes. A sync bundle
+or API caller can still name such a client: `syncSubagents` reports a
+`Problem` and writes no agent of the wrong role. An unchanged file magpie
+previously gave that client is backed up and removed; a file the user
+edited stays theirs. Switching roles on OpenCode rewrites the same managed
+file, retaining the existing hash and backup protections. Collect/Put carry
+the role with the rest of the agent.
+
+`agent_roles_test.go` checks legacy records, both role transitions,
+unsupported writers, user edits, carried roles and invalid input.
+`library-subagents.test.cjs` checks the picker, capability hints, saved role
+and reopening in all five languages on Chromium and WebKit.
 
 ## Runtime path
 

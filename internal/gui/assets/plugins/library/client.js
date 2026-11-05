@@ -684,7 +684,7 @@ magpie.plugin("library", (ctx) => {
       ul.append(li);
     }
     if (ul.childElementCount) card.append(ul);
-    const tabNames = { instructions: t("Instructions"), mcp: t("MCP servers"), skills: t("Skills"), hooks: t("Hooks"), subagents: t("Subagents") };
+    const tabNames = { instructions: t("Instructions"), mcp: t("MCP servers"), skills: t("Skills"), hooks: t("Hooks"), subagents: t("Custom agents") };
     const others = Object.keys(away).filter((k) => k in tabNames);
     if (others.length) {
       const more = el("div", "lib-problems-away");
@@ -729,7 +729,7 @@ magpie.plugin("library", (ctx) => {
     if (kind === "mcp") return name ? t("MCP server {name}", { name }) : t("MCP servers");
     if (kind === "skill") return t("Skill {name}", { name });
     if (kind === "hook") return t("Hook {name}", { name });
-    if (kind === "subagent") return t("Subagent {name}", { name });
+    if (kind === "subagent") return t("Agent {name}", { name });
     if (kind === "project") return name ? t("Skill {name}", { name }) : t("The project");
     return what;
   }
@@ -821,7 +821,7 @@ magpie.plugin("library", (ctx) => {
       ["mcp", t("MCP servers") + n("mcp")],
       ["skills", t("Skills") + n("skills")],
       ["hooks", t("Hooks") + n("hooks")],
-      ["subagents", t("Subagents") + n("subagents")],
+      ["subagents", t("Custom agents") + n("subagents")],
       ["rtk", "RTK"],
     ], tab, openTab);
     tabs.classList.add("lib-tabs");
@@ -3355,8 +3355,8 @@ magpie.plugin("library", (ctx) => {
 
   // ---------- subagents ----------
 
-  // A subagent (#2283, chuanchinatest) is a helper with a prompt of its
-  // own that an agent hands a task to. It is kept once and written into
+  // A library agent has its own prompt and a primary or subagent role.
+  // It is kept once and written into
   // each agent picked, as that agent's own file in its own folder and
   // shape (subagents.go). Its skills and MCP servers go only into the
   // files that can name them: skills into Claude Code's, servers into
@@ -3366,13 +3366,15 @@ magpie.plugin("library", (ctx) => {
   const subagentAgentOf = (id) => (lib.subagentAgents || []).find((x) => x.id === id);
   const subagentAgents = () => shownAgents().filter((a) => subagentAgentOf(a.id));
   // why a can't be given a subagent, or ""
-  const subagentBlocked = (a) => {
+  const subagentBlocked = (a, mode = "subagent") => {
     const sa = subagentAgentOf(a.id);
     if (!sa || sa.no) return sa?.wsl ? t("magpie gives subagents only to agents on this computer, not yet to {agent} in WSL", { agent: a.name }) : t("{agent} reads no subagents magpie can write", { agent: a.name });
+    if (mode === "primary" && !sa.primary) return t("magpie can't write primary agents for {agent} yet", { agent: a.name });
     return "";
   };
   // the agents of all that take what s binds, by kind: who can't bind them
-  const unbound = (all, ids, kind) => all.filter((a) => ids.includes(a.id) && !subagentBlocked(a) && !subagentAgentOf(a.id)[kind]);
+  const unbound = (all, ids, kind, mode) => all.filter((a) => ids.includes(a.id) && !subagentBlocked(a, mode) && !subagentAgentOf(a.id)[kind]);
+  const subagentRoleName = (mode) => mode === "primary" ? t("Primary agent") : t("Subagent");
   // the name of a model a subagent may run on, its id when it is no longer one
   const subagentModelName = (id) => (lib.subagentModels || []).find((m) => m.id === id)?.name || id;
   function subagentLine(s) {
@@ -3384,28 +3386,28 @@ magpie.plugin("library", (ctx) => {
   }
 
   function renderSubagents(body) {
-    body.append(intro(t("A subagent is a helper with a prompt of its own that an agent hands a task to — a reviewer, a test writer. Add it once and magpie writes it into each agent you pick, as that agent's own subagent file.")));
+    body.append(intro(t("An agent has a prompt of its own. Use a primary agent for your conversation, or a subagent for tasks another agent hands it. Add it once and pick the clients that get it.")));
     const all = subagentAgents();
     const subs = lib.subagents || [];
     pickingFor("subagents", []);
     if (!subs.length) {
-      body.append(empty(t("No subagents in the library yet"), t("Add one, and pick the agents that can hand it a task."), button(t("＋ Add a subagent"), "action", () => editSubagent(null))));
+      body.append(empty(t("No agents in the library yet"), t("Add one, choose its role, and pick the clients that get it."), button(t("＋ Add an agent"), "action", () => editSubagent(null))));
     } else {
       const list = el("div", "list lib-list");
       list.append(...[...subs].sort((a, b) => a.name.localeCompare(b.name)).map((s) => subagentRow(s, all)));
       body.append(list);
       const after = el("div", "after-list");
-      after.append(button(t("＋ Add subagent"), "", () => editSubagent(null)));
+      after.append(button(t("＋ Add agent"), "", () => editSubagent(null)));
       body.append(after);
     }
     // what each agent does with what a subagent binds: said only when one
     // binds something that an agent it is given to can't
-    const given = (kind) => [...new Set(subs.filter((s) => s[kind]?.length).flatMap((s) => unbound(all, s.agents || [], kind)))];
+    const given = (kind) => [...new Set(subs.filter((s) => s[kind]?.length).flatMap((s) => unbound(all, s.agents || [], kind, s.mode)))];
     const noSkills = given("skills"), noMCP = given("mcp");
-    const noModel = [...new Set(subs.filter((s) => s.model).flatMap((s) => unbound(all, s.agents || [], "model")))];
-    if (noSkills.length) body.append(el("p", "lib-aside lib-subagents-noskills", t("{agents} can't bind skills to a subagent: theirs gets its prompt, and every skill the agent has.", { agents: noSkills.map((a) => a.name).join(", ") })));
-    if (noMCP.length) body.append(el("p", "lib-aside lib-subagents-nomcp", t("{agents} can't bind MCP servers to a subagent: theirs gets its prompt, and every server the agent has.", { agents: noMCP.map((a) => a.name).join(", ") })));
-    if (noModel.length) body.append(el("p", "lib-aside lib-subagents-nomodel", t("{agents} can't be given a subagent's model: theirs runs on the model the agent picks.", { agents: noModel.map((a) => a.name).join(", ") })));
+    const noModel = [...new Set(subs.filter((s) => s.model).flatMap((s) => unbound(all, s.agents || [], "model", s.mode)))];
+    if (noSkills.length) body.append(el("p", "lib-aside lib-subagents-noskills", t("{agents} can't bind skills to this custom agent: it uses the client's skills instead.", { agents: noSkills.map((a) => a.name).join(", ") })));
+    if (noMCP.length) body.append(el("p", "lib-aside lib-subagents-nomcp", t("{agents} can't bind MCP servers to this custom agent: it uses the client's servers instead.", { agents: noMCP.map((a) => a.name).join(", ") })));
+    if (noModel.length) body.append(el("p", "lib-aside lib-subagents-nomodel", t("{agents} can't be given this custom agent's model: the client picks its model.", { agents: noModel.map((a) => a.name).join(", ") })));
     // Cursor's app reads ~/.cursor/agents; its cursor-agent CLI reads
     // only a project's .cursor/agents
     if (subs.some((s) => s.agents?.includes("cursor"))) body.append(el("p", "lib-aside lib-subagents-cursor", t("The Cursor app has these subagents; its cursor-agent command reads only a project's own .cursor/agents.")));
@@ -3417,11 +3419,12 @@ magpie.plugin("library", (ctx) => {
     const row = el("div", "row lib-row click lib-subagent");
     const who = el("div", "who");
     who.append(el("div", "name mono", s.name));
+    who.append(el("div", "sub lib-subagentrole", subagentRoleName(s.mode)));
     who.append(el("div", "lib-subagentdesc", s.description));
     const line = subagentLine(s);
     if (line) who.append(el("div", "sub lib-subagentuses", line));
     row.append(glyph(GLYPH.subagent), who,
-      agentChips(all, s.agents, chipsChange("subagents/agents", s.name, "subagents", (x) => subagentRow(x, all)), { problems: s.problems, blocked: subagentBlocked, all: true }));
+      agentChips(all, s.agents, chipsChange("subagents/agents", s.name, "subagents", (x) => subagentRow(x, all)), { problems: s.problems, blocked: (a) => subagentBlocked(a, s.mode), all: true }));
     row.onclick = () => editSubagent(s);
     row.title = t("Edit {name}", { name: s.name });
     return row;
@@ -3469,16 +3472,32 @@ magpie.plugin("library", (ctx) => {
 
   function editSubagent(s) {
     const all = subagentAgents();
-    const d = s ? { name: s.name, description: s.description, prompt: s.prompt, model: s.model || "", skills: [...(s.skills || [])], mcp: [...(s.mcp || [])], agents: [...(s.agents || [])] }
-      : { name: "", description: "", prompt: "", model: "", skills: [], mcp: [], agents: all.filter((a) => !subagentBlocked(a)).map((a) => a.id) };
+    const d = s ? { name: s.name, description: s.description, prompt: s.prompt, mode: s.mode || "subagent", model: s.model || "", skills: [...(s.skills || [])], mcp: [...(s.mcp || [])], agents: [...(s.agents || [])] }
+      : { name: "", description: "", prompt: "", mode: "subagent", model: "", skills: [], mcp: [], agents: all.filter((a) => !subagentBlocked(a)).map((a) => a.id) };
     const ed = el("div", "editor lib-editor lib-subagentedit");
     const head = el("div", "ehead");
-    head.append(glyph(GLYPH.subagent), el("b", "", s ? s.name : t("New subagent")));
+    head.append(glyph(GLYPH.subagent), el("b", "", s ? s.name : t("New custom agent")));
     ed.append(head);
     const err = el("div", "editor-error");
     const name = field2(d.name, t("e.g. code-reviewer"), (v) => { d.name = v.trim(); });
     name.classList.add("mono");
     ed.append(...field(t("Name"), name, t("Lowercase letters, digits and -; it is the file's name in each agent")));
+    const role = el("button", "sess-pick lib-menu lib-subagentmode");
+    role.type = "button";
+    role.setAttribute("aria-haspopup", "menu");
+    role.setAttribute("aria-expanded", "false");
+    const drawRole = () => role.replaceChildren(el("span", "", subagentRoleName(d.mode)), svg(CHEV, 11, 1.6));
+    role.onclick = (e) => {
+      e.stopPropagation();
+      openProtoMenu(role, ["subagent", "primary"].map((v) => ({ v, name: subagentRoleName(v), literalName: true, note: "" })), d.mode, (v) => {
+        d.mode = v;
+        d.agents = d.agents.filter((id) => !subagentBlocked(agentOf(id) || { id }, d.mode));
+        drawRole();
+        drawAgents();
+      }, "Agent role", "", "left");
+    };
+    drawRole();
+    ed.append(...field(t("Agent role"), role, t("Primary agents handle your conversation; subagents receive tasks from another agent. magpie currently writes primary agents only for OpenCode.")));
     const box = (cls, value, placeholder, rows, max, onEnter) => {
       const ta = el("textarea", "lib-text small " + cls);
       ta.value = value;
@@ -3494,10 +3513,10 @@ magpie.plugin("library", (ctx) => {
     // its lines), so Enter saves; the prompt's Enter is a new line
     const desc = box("lib-subagentdescin", d.description, t("e.g. Reviews a diff for bugs. Use after code changes."), 2, 1000, true);
     desc.oninput = () => { d.description = desc.value; };
-    ed.append(...field(t("Description"), desc, t("What it does and when to use it: the agent reads this to decide when to hand it a task")));
+    ed.append(...field(t("Description"), desc, t("What the agent does and when to use it")));
     const prompt = box("lib-subagentprompt", d.prompt, t("You are a careful code reviewer…"), 6, 100000, false);
     prompt.oninput = () => { d.prompt = prompt.value; };
-    ed.append(...field(t("Prompt"), prompt, t("What the subagent is told before its task")));
+    ed.append(...field(t("Prompt"), prompt, t("What the agent is told before its task")));
 
     // what the skills and servers reach, said under each: the agents
     // picked that can't bind them
@@ -3512,19 +3531,19 @@ magpie.plugin("library", (ctx) => {
     ed.append(...field(t("Agents"), agentsBox));
     ed.append(err);
     function drawHints() {
-      const sk = unbound(all, d.agents, "skills"), mc = unbound(all, d.agents, "mcp");
+      const sk = unbound(all, d.agents, "skills", d.mode), mc = unbound(all, d.agents, "mcp", d.mode);
       skillsHint.textContent = !lib.skills.length ? t("The library has no skills yet") : sk.length ? t("Not bound for {agents}: theirs uses every skill the agent has", { agents: sk.map((a) => a.name).join(", ") }) : "";
       mcpHint.textContent = !lib.servers.length ? t("The library has no MCP servers yet") : mc.length ? t("Not bound for {agents}: theirs uses every server the agent has", { agents: mc.map((a) => a.name).join(", ") }) : "";
       // who runs it on the model set, and who doesn't: Codex's subagent
       // model on the Agents page takes the place of every subagent's
-      const mo = unbound(all, d.agents, "model");
+      const mo = unbound(all, d.agents, "model", d.mode);
       const held = d.model && lib.codexSubagentModel && d.agents.includes("codex");
-      modelHint.textContent = !d.model ? t("Each agent runs it on the model it picks for a subagent") : [
+      modelHint.textContent = !d.model ? t("Each client picks the model for this agent") : [
         mo.length ? t("Not set for {agents}: theirs runs on the model the agent picks", { agents: mo.map((a) => a.name).join(", ") }) : "",
         held ? t("Codex's subagent model on the Agents page is set, and takes the place of this one") : ""].filter(Boolean).join(" · ");
     }
     function drawAgents() {
-      agentsBox.replaceChildren(agentChips(all, d.agents, (next) => { d.agents = next; drawAgents(); }, { names: true, blocked: subagentBlocked, all: true }));
+      agentsBox.replaceChildren(agentChips(all, d.agents, (next) => { d.agents = next; drawAgents(); }, { names: true, blocked: (a) => subagentBlocked(a, d.mode), all: true }));
       drawHints();
     }
     drawAgents();
@@ -3538,7 +3557,7 @@ magpie.plugin("library", (ctx) => {
     const save = async () => {
       err.textContent = "";
       try {
-        const subagent = { name: d.name, description: d.description.trim(), prompt: d.prompt, model: d.model, skills: d.skills, mcp: d.mcp, agents: d.agents.filter((id) => !subagentBlocked(agentOf(id) || { id })) };
+        const subagent = { name: d.name, description: d.description.trim(), prompt: d.prompt, mode: d.mode, model: d.model, skills: d.skills, mcp: d.mcp, agents: d.agents.filter((id) => !subagentBlocked(agentOf(id) || { id }, d.mode)) };
         take(await api("library/subagents/save", { old: s ? s.name : "", subagent }));
         report(lib.result, s ? t("{name} saved", { name: d.name }) : "");
         closeLibModal(true);

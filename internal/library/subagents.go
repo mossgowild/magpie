@@ -50,11 +50,14 @@ import (
 // it is magpie's to rewrite or remove, one the user changed is theirs from
 // then on, and a file by that name magpie didn't write is never touched.
 
-// Subagent is one the agents ticked for it are given.
+// Subagent is a library agent given to the clients ticked for it. The
+// storage name stays Subagent so existing libraries and backups keep working.
 type Subagent struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Prompt      string `json:"prompt"`
+	// Mode is primary or subagent; an older record with none is a subagent.
+	Mode string `json:"mode,omitempty"`
 	// Model is the model or routing group the subagent runs on, as the
 	// agent names it; "" leaves it to the agent
 	Model  string   `json:"model,omitempty"`
@@ -97,10 +100,34 @@ type subagentSpec struct {
 	// without uses all the agent has. model: it names the subagent's
 	// model; one without runs it on the model the agent picks
 	skills, mcp, model bool
+	primary            bool
 	render             func(s *Subagent, skills, mcp []string) []byte
 }
 
 func (sp *subagentSpec) path(name string) string { return filepath.Join(sp.dir, name+sp.ext) }
+
+func (s *Subagent) mode() string {
+	if s.Mode == "" {
+		return "subagent"
+	}
+	return s.Mode
+}
+
+// supports never turns a primary agent into a subagent on a client whose
+// writer cannot express its role.
+func (sp *subagentSpec) supports(s *Subagent) string {
+	switch s.mode() {
+	case "subagent":
+		return ""
+	case "primary":
+		if sp.primary {
+			return ""
+		}
+		return "magpie can't write primary agents for this client yet"
+	default:
+		return fmt.Sprintf("unknown agent mode %q: use primary or subagent", s.Mode)
+	}
+}
 
 // wslNoSubagents is why an agent in WSL is given no subagents, its distro
 // running or not.
@@ -137,10 +164,13 @@ func subagentSpecOf(t *Target) (*subagentSpec, string) {
 	case "codex":
 		return &subagentSpec{dir: filepath.Join(codexDir(), "agents"), ext: ".toml", render: codexRole, model: true}, ""
 	case "opencode":
-		// named by its file; mode subagent is for the main agent to call
-		return md(filepath.Join(filepath.Dir(a.Path), "agents"), func(s *Subagent, _, _ []string) [][2]string {
-			return [][2]string{{"description", yamlStr(s.Description)}, {"mode", "subagent"}}
-		}), ""
+		// opencode.ai/docs/agents/#mode: primary is selected for a session,
+		// subagent is called by another agent. Both use the same folder.
+		sp := md(filepath.Join(filepath.Dir(a.Path), "agents"), func(s *Subagent, _, _ []string) [][2]string {
+			return [][2]string{{"description", yamlStr(s.Description)}, {"mode", s.mode()}}
+		})
+		sp.primary = true
+		return sp, ""
 	case "gemini":
 		return md(filepath.Join(h, ".gemini", "agents"), plain), ""
 	case "qwen":
@@ -222,6 +252,9 @@ func subagentHash(b []byte) string {
 }
 
 func (s *Subagent) check() error {
+	if s.mode() != "subagent" && s.mode() != "primary" {
+		return fmt.Errorf("unknown agent mode %q: use primary or subagent", s.Mode)
+	}
 	if !subagentNameRe.MatchString(s.Name) {
 		return fmt.Errorf("subagent name %q: use 2 to 50 lowercase letters, digits and -, not starting or ending with -", s.Name)
 	}
@@ -301,6 +334,13 @@ func (l *Library) syncSubagents(t *Target, b *backups, res *Result) {
 		return
 	}
 	wanted := map[string]*Subagent{} // path → the subagent written there
+	want = slices.DeleteFunc(want, func(s *Subagent) bool {
+		if why := sp.supports(s); why != "" {
+			res.fail(id, "subagent:"+s.Name, errors.New(why))
+			return true
+		}
+		return false
+	})
 	for _, s := range want {
 		wanted[sp.path(s.Name)] = s
 	}
@@ -480,6 +520,8 @@ type SubagentAgentView struct {
 	// Model: its subagents run on a model of their own when one is set;
 	// one that doesn't runs them on the model the agent picks
 	Model bool `json:"model,omitempty"`
+	// Primary: magpie can write a primary agent for this client.
+	Primary bool `json:"primary,omitempty"`
 }
 
 // subagentsView is the Subagents page for these agents, and those in
@@ -497,6 +539,7 @@ func (l *Library) subagentsView(targets []*Target, asleep []*agent.Agent, of fun
 		av := SubagentAgentView{ID: t.Agent.ID, No: why, WSL: t.Agent.WSL != ""}
 		if sp != nil {
 			av.Dir, av.Skills, av.MCP, av.Model = sp.dir, sp.skills, sp.mcp, sp.model
+			av.Primary = sp.primary
 		}
 		agents = append(agents, av)
 	}
@@ -521,12 +564,16 @@ func (l *Library) subagentsView(targets []*Target, asleep []*agent.Agent, of fun
 			}
 		}
 		for _, av := range agents {
-			if av.No != "" && slices.Contains(s.Agents, av.ID) {
+			why := av.No
+			if why == "" && s.mode() == "primary" && !av.Primary {
+				why = "magpie can't write primary agents for this client yet"
+			}
+			if why != "" && slices.Contains(s.Agents, av.ID) {
 				if sv.Problems == nil {
 					sv.Problems = map[string]string{}
 				}
 				if sv.Problems[av.ID] == "" {
-					sv.Problems[av.ID] = av.No
+					sv.Problems[av.ID] = why
 				}
 			}
 		}
